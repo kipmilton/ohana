@@ -37,7 +37,7 @@ import {
   initialVendorSales,
   initialAdminNotifications
 } from '../data/mockData';
-import { isSupabaseConfigured, getStoredSupabaseConfig, saveSupabaseConfig, supabase } from '../lib/supabase';
+import { isSupabaseConfigured, getStoredSupabaseConfig, saveSupabaseConfig, getSupabase, supabase } from '../lib/supabase';
 
 export type NavView = 
   | 'dashboard' 
@@ -56,7 +56,7 @@ interface AppContextType {
   authSession: AuthSession;
   currentRole: UserRole;
   setCurrentRole: (role: UserRole) => void;
-  login: (email: string, password: string) => { success: boolean; error?: string; requiresReset?: boolean };
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string; requiresReset?: boolean }>;
   logout: () => void;
   resetVendorPassword: (newPassword: string) => Promise<boolean>;
   updateAccountPassword: (oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
@@ -298,11 +298,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     wcOrders
   ]);
 
-  // AUTHENTICATION LOGIC
-  const login = (email: string, password: string) => {
+  // AUTHENTICATION LOGIC - Real Supabase Auth with seamless store resolution
+  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string; requiresReset?: boolean }> => {
     const cleanEmail = email.trim().toLowerCase();
 
-    // Check if Admin (Restricted exclusively to the 2 specified admin emails)
+    // 1. If Supabase is configured, enforce strict Supabase Auth Sign-In
+    const supabaseClient = getSupabase();
+    if (supabaseClient) {
+      try {
+        const { data, error } = await supabaseClient.auth.signInWithPassword({
+          email: cleanEmail,
+          password: password,
+        });
+
+        if (error) {
+          // If Supabase rejected the credentials with invalid login credentials, return error immediately!
+          return { success: false, error: error.message || 'Invalid email or password. Please verify your credentials.' };
+        }
+
+        if (data?.user) {
+          const authUser = data.user;
+          // Check role from profiles table or metadata
+          const { data: profile } = await supabaseClient
+            .from('profiles')
+            .select('*')
+            .eq('id', authUser.id)
+            .single();
+
+          const userRole = profile?.role;
+          const isAdmin = 
+            userRole === 'owner' || 
+            userRole === 'operations_manager' || 
+            cleanEmail === 'neemakinoti@gmail.com' ||
+            cleanEmail === 'kipmilton71@gmail.com' ||
+            cleanEmail === 'admin@ohana.co.ke' ||
+            cleanEmail === 'owner@ohana.co.ke';
+
+          if (isAdmin) {
+            const session: AuthSession = {
+              user: {
+                id: authUser.id,
+                email: cleanEmail,
+                role: 'admin',
+                requiresPasswordReset: false,
+              }
+            };
+            setAuthSession(session);
+            setActiveView('dashboard');
+            return { success: true };
+          } else {
+            // Vendor from Supabase Auth
+            const store = storeAccounts.find(s => s.email.toLowerCase() === cleanEmail);
+            const session: AuthSession = {
+              user: {
+                id: authUser.id,
+                email: cleanEmail,
+                role: 'vendor',
+                storeId: store?.id || profile?.partner_id || authUser.id,
+                storeName: store?.name || profile?.full_name || 'Retail Store',
+                requiresPasswordReset: store?.requiresPasswordReset || false,
+              }
+            };
+            setAuthSession(session);
+            setActiveView('vendor_sales');
+            return { success: true, requiresReset: store?.requiresPasswordReset };
+          }
+        }
+      } catch (sbErr: any) {
+        console.warn('Supabase auth attempt returned error:', sbErr);
+        return { success: false, error: sbErr?.message || 'Authentication failed on Supabase.' };
+      }
+    }
+
+    // 2. Offline / Local fallback: Check if Admin (requires explicit password check)
     const isAdminUser = 
       cleanEmail === 'neemakinoti@gmail.com' ||
       cleanEmail === 'kipmilton71@gmail.com' ||
@@ -310,11 +378,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cleanEmail === 'owner@ohana.co.ke';
 
     if (isAdminUser) {
-      // Validate admin password if configured
       const adminPasswords = JSON.parse(localStorage.getItem('ohana_admin_passwords') || '{}');
       const expectedAdminPassword = adminPasswords[cleanEmail];
-      if (expectedAdminPassword && expectedAdminPassword !== password) {
-        return { success: false, error: 'Incorrect password for this admin account.' };
+
+      // If a password was set for this admin in Settings, it MUST match
+      if (expectedAdminPassword) {
+        if (password !== expectedAdminPassword) {
+          return { success: false, error: 'Incorrect password for this admin account.' };
+        }
+      } else {
+        // If no password set yet in local storage, only allow secure default or reject empty
+        if (!password || password.trim().length < 6) {
+          return { success: false, error: 'Password must be at least 6 characters.' };
+        }
+        // Save the first provided valid password for this admin
+        adminPasswords[cleanEmail] = password;
+        localStorage.setItem('ohana_admin_passwords', JSON.stringify(adminPasswords));
       }
 
       const session: AuthSession = {
@@ -330,7 +409,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: true };
     }
 
-    // Check Stores / Vendors (from registered stores)
+    // 3. Check Stores / Vendors (from registered stores)
     let store = storeAccounts.find(s => s.email.toLowerCase() === cleanEmail);
 
     // Fallback: check registered partners
@@ -354,8 +433,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (store) {
-      // Validate password if configured
-      if (store.password && store.password !== password && password !== 'admin123') {
+      // Validate password strictly (no bypass)
+      if (store.password && store.password !== password) {
         return { success: false, error: 'Incorrect password for this store account.' };
       }
 
@@ -379,7 +458,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: true };
     }
 
-    return { success: false, error: 'No user account found with this email. Please check with Ohana Admin.' };
+    return { success: false, error: 'No user account found with this email. Please verify credentials or contact Ohana Admin.' };
   };
 
   const logout = () => {
@@ -446,6 +525,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       adminPasswords[adminEmail] = newPassword;
       localStorage.setItem('ohana_admin_passwords', JSON.stringify(adminPasswords));
+
+      // If Supabase is connected, update Supabase user password
+      const supabaseClient = getSupabase();
+      if (supabaseClient) {
+        try {
+          await supabaseClient.auth.updateUser({ password: newPassword });
+        } catch (sbErr) {
+          console.warn('Supabase password update notice:', sbErr);
+        }
+      }
 
       // Post notification
       const newNotif: AdminNotification = {
