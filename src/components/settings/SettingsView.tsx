@@ -127,17 +127,17 @@ export const SettingsView: React.FC = () => {
               </div>
             )}
 
-            <div className="p-3.5 bg-blue-50/70 rounded-2xl border border-blue-200 text-blue-950 space-y-1">
-              <div className="flex items-center gap-1 font-bold">
-                <Shield className="w-3.5 h-3.5 text-blue-700" />
-                <span>Security Notice</span>
+            {isVendor && (
+              <div className="p-3.5 bg-blue-50/70 rounded-2xl border border-blue-200 text-blue-950 space-y-1">
+                <div className="flex items-center gap-1 font-bold">
+                  <Shield className="w-3.5 h-3.5 text-blue-700" />
+                  <span>Store Account</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-blue-900">
+                  Your store account gives you access to real-time sales reporting, invoice statements, and assigned inventory. Keep your credentials private.
+                </p>
               </div>
-              <p className="text-[11px] leading-relaxed text-blue-900">
-                {isVendor
-                  ? 'Your store account gives you access to real-time sales reporting, invoice statements, and assigned inventory. Keep your credentials private.'
-                  : 'For security, administrator privileges are strictly limited to the 2 authorized owners (neemakinoti@gmail.com and kipmilton71@gmail.com).'}
-              </p>
-            </div>
+            )}
           </div>
         </div>
 

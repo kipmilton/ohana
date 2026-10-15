@@ -22,6 +22,7 @@ export const saveSupabaseConfig = (url: string, anonKey: string) => {
   if (typeof window !== 'undefined') {
     localStorage.setItem('ohana_supabase_url', url.trim());
     localStorage.setItem('ohana_supabase_anon_key', anonKey.trim());
+    cachedClient = null; // Reset cache so new client is instantiated
   }
 };
 

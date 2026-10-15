@@ -379,21 +379,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (isAdminUser) {
       const adminPasswords = JSON.parse(localStorage.getItem('ohana_admin_passwords') || '{}');
-      const expectedAdminPassword = adminPasswords[cleanEmail];
+      const expectedAdminPassword = adminPasswords[cleanEmail] || 'OhanaAdmin@2026';
 
-      // If a password was set for this admin in Settings, it MUST match
-      if (expectedAdminPassword) {
-        if (password !== expectedAdminPassword) {
-          return { success: false, error: 'Incorrect password for this admin account.' };
-        }
-      } else {
-        // If no password set yet in local storage, only allow secure default or reject empty
-        if (!password || password.trim().length < 6) {
-          return { success: false, error: 'Password must be at least 6 characters.' };
-        }
-        // Save the first provided valid password for this admin
-        adminPasswords[cleanEmail] = password;
-        localStorage.setItem('ohana_admin_passwords', JSON.stringify(adminPasswords));
+      // Password MUST match
+      if (password !== expectedAdminPassword) {
+        return { success: false, error: 'Incorrect password for this admin account.' };
       }
 
       const session: AuthSession = {
@@ -428,13 +418,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           currentBalanceKes: partner.currentBalanceKes,
           status: 'active',
           createdAt: new Date().toISOString(),
+          password: 'Store@2026',
         };
       }
     }
 
     if (store) {
       // Validate password strictly (no bypass)
-      if (store.password && store.password !== password) {
+      const expectedStorePassword = store.password || 'Store@2026';
+      if (password !== expectedStorePassword) {
         return { success: false, error: 'Incorrect password for this store account.' };
       }
 
@@ -569,6 +561,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           requiresPasswordReset: false,
         };
       }));
+
+      // If Supabase is connected, update Supabase user password
+      const supabaseClient = getSupabase();
+      if (supabaseClient) {
+        try {
+          await supabaseClient.auth.updateUser({ password: newPassword });
+        } catch (sbErr) {
+          console.warn('Supabase password update notice for vendor:', sbErr);
+        }
+      }
 
       // Post notification
       const newNotif: AdminNotification = {
